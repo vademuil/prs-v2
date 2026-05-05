@@ -168,7 +168,7 @@ USD_TIER_BY_CC: dict[str, str] = {
 # ----------------------------------------------------------------------------
 
 CURRENCY_INFO: dict[str, dict] = {
-    # ROW
+    # ROW: EU, AU, CA, NZ, NO, PL, CH, GB, US
     "USD":       {"package": "ROW",     "name": "US Dollar",         "vat_override": None},
     "EUR":       {"package": "ROW",     "name": "Euro",              "vat_override": 0.21},
     "GBP":       {"package": "ROW",     "name": "British Pound",     "vat_override": None},
@@ -178,16 +178,8 @@ CURRENCY_INFO: dict[str, dict] = {
     "NOK":       {"package": "ROW",     "name": "Norwegian Krone",   "vat_override": None},
     "NZD":       {"package": "ROW",     "name": "NZ Dollar",         "vat_override": None},
     "PLN":       {"package": "ROW",     "name": "Polish Złoty",      "vat_override": None},
-    "ZAR":       {"package": "ROW",     "name": "South African Rand", "vat_override": None},
-    "CZK":       {"package": "ROW",     "name": "Czech Koruna",      "vat_override": None},
-    "DKK":       {"package": "ROW",     "name": "Danish Krone",      "vat_override": None},
-    "HUF":       {"package": "ROW",     "name": "Hungarian Forint",  "vat_override": None},
-    "RON":       {"package": "ROW",     "name": "Romanian Leu",      "vat_override": None},
-    "BGN":       {"package": "ROW",     "name": "Bulgarian Lev",     "vat_override": None},
-    "ISK":       {"package": "ROW",     "name": "Icelandic Króna",   "vat_override": None},
-    "RSD":       {"package": "ROW",     "name": "Serbian Dinar",     "vat_override": None},
 
-    # ASIA
+    # ASIA: HK, IN, ID, MY, PH, SG, TW, TH, USD_SASIA, VN, JP, KR
     "JPY":       {"package": "ASIA",    "name": "Japanese Yen",      "vat_override": None},
     "KRW":       {"package": "ASIA",    "name": "Korean Won",        "vat_override": None},
     "TWD":       {"package": "ASIA",    "name": "Taiwan Dollar",     "vat_override": None},
@@ -201,19 +193,18 @@ CURRENCY_INFO: dict[str, dict] = {
     "INR":       {"package": "ASIA",    "name": "Indian Rupee",      "vat_override": None},
     "USD_SASIA": {"package": "ASIA",    "name": "USD (S. Asia tier)", "vat_override": 0.0},
 
-    # CN
+    # CN_ONLY: только CNY
     "CNY":       {"package": "CN_ONLY", "name": "Chinese Yuan",      "vat_override": None},
 
-    # RU-CIS
+    # RU_CIS: RUB, USD_CIS, KZT, UAH
     "RUB":       {"package": "RU_CIS",  "name": "Russian Ruble",     "vat_override": None},
     "UAH":       {"package": "RU_CIS",  "name": "Ukrainian Hryvnia", "vat_override": None},
     "KZT":       {"package": "RU_CIS",  "name": "Kazakhstani Tenge", "vat_override": None},
     "USD_CIS":   {"package": "RU_CIS",  "name": "USD (CIS tier)",    "vat_override": 0.0},
 
-    # LATAM
+    # LATAM: BR, CL, CO, CR, USD_LATAM, MX, PE, UY
     "BRL":       {"package": "LATAM",   "name": "Brazilian Real",    "vat_override": None},
     "MXN":       {"package": "LATAM",   "name": "Mexican Peso",      "vat_override": None},
-    "ARS":       {"package": "LATAM",   "name": "Argentine Peso",    "vat_override": None},
     "CLP":       {"package": "LATAM",   "name": "Chilean Peso",      "vat_override": None},
     "COP":       {"package": "LATAM",   "name": "Colombian Peso",    "vat_override": None},
     "PEN":       {"package": "LATAM",   "name": "Peruvian Sol",      "vat_override": None},
@@ -221,13 +212,13 @@ CURRENCY_INFO: dict[str, dict] = {
     "CRC":       {"package": "LATAM",   "name": "Costa Rican Colón", "vat_override": None},
     "USD_LATAM": {"package": "LATAM",   "name": "USD (LATAM tier)",  "vat_override": 0.0},
 
-    # MENA
+    # MENA: IL, KW, QA, SA, ZA, USD_MENA, AE
     "ILS":       {"package": "MENA",    "name": "Israeli Shekel",    "vat_override": None},
     "AED":       {"package": "MENA",    "name": "UAE Dirham",        "vat_override": None},
     "SAR":       {"package": "MENA",    "name": "Saudi Riyal",       "vat_override": None},
     "QAR":       {"package": "MENA",    "name": "Qatari Riyal",      "vat_override": None},
     "KWD":       {"package": "MENA",    "name": "Kuwaiti Dinar",     "vat_override": None},
-    "TRY":       {"package": "MENA",    "name": "Turkish Lira",      "vat_override": None},
+    "ZAR":       {"package": "MENA",    "name": "South African Rand", "vat_override": None},
     "USD_MENA":  {"package": "MENA",    "name": "USD (MENA tier)",   "vat_override": 0.0},
 }
 
@@ -589,28 +580,45 @@ def build_recommendations(
             if target_pub_usd is None or current_pub is None:
                 rec_pub = current_pub
                 delta = None
+                gap_pct = None
             else:
                 # Raise-only: max(current, base)
                 rec_pub = max(current_pub, target_pub_usd)
                 delta = rec_pub - current_pub
+                # gap_pct = насколько current ниже target, в долях от target
+                # > 0 если нужно поднимать; ≤ 0 если уже выше или равен базе
+                if target_pub_usd > 0:
+                    gap_pct = (target_pub_usd - current_pub) / target_pub_usd
+                else:
+                    gap_pct = 0.0
 
-            if rec_pub is not None:
+            # Если цену не меняем (delta == 0 либо None) — не трогаем retail.
+            # Только когда реально поднимаем (delta > 0) — пересчитываем и ψ-округляем.
+            EPS = 1e-6
+            should_change_price = (
+                delta is not None and delta > EPS
+            )
+
+            if should_change_price:
                 rec_retail_usd_raw = reverse_to_retail_usd(
                     rec_pub, item["vat"], distributor_fee_pct
                 )
                 rec_retail_usd_psy = floor_to_99(rec_retail_usd_raw)
-                # local-цена при ψ-округл retail
+                # local при ψ-округл retail
                 if item["fx"]:
                     rec_retail_local = rec_retail_usd_psy * item["fx"]
                 else:
                     rec_retail_local = None
             else:
-                rec_retail_usd_raw = None
-                rec_retail_usd_psy = None
-                rec_retail_local = None
+                # Никаких изменений — рекомендация = текущая retail.
+                rec_retail_usd_raw = item["current_retail_usd"]
+                rec_retail_usd_psy = item["current_retail_usd"]
+                rec_retail_local = item["local_price"]
 
             rows.append({
                 "is_base": is_base,
+                "is_changed": should_change_price,
+                "gap_pct": gap_pct,
                 "tier": item["tier"],
                 "tier_label": ("⭐ " if is_base else "") + item["tier"],
                 "country": f"{item['cc']} — {item['country_name']}",
@@ -624,6 +632,7 @@ def build_recommendations(
                 "target_pub_usd": round(target_pub_usd, 2) if target_pub_usd is not None else None,
                 "rec_pub_usd": round(rec_pub, 2) if rec_pub is not None else None,
                 "delta_pub_usd": round(delta, 2) if delta is not None else None,
+                "gap_pct_str": f"{gap_pct*100:+.1f}%" if gap_pct is not None else "—",
                 "rec_retail_usd_raw": round(rec_retail_usd_raw, 2) if rec_retail_usd_raw is not None else None,
                 "rec_retail_usd_psy": round(rec_retail_usd_psy, 2) if rec_retail_usd_psy is not None else None,
                 "rec_retail_local": round(rec_retail_local, 2) if rec_retail_local is not None else None,
@@ -647,12 +656,36 @@ def build_recommendations(
 # UI
 # ----------------------------------------------------------------------------
 
+def _row_style(row: pd.Series) -> list[str]:
+    """
+    Подсветка строки рекомендации:
+      • жёлтый — цена изменена (delta > 0)
+      • красный — цена изменена И gap > 15% (большой разрыв)
+      • без цвета — цена не меняется (база или уже выше базы)
+    """
+    is_changed = bool(row.get("_is_changed"))
+    gap = row.get("_gap_pct") or 0.0
+
+    if not is_changed:
+        return [""] * len(row)
+    if gap > 0.15:
+        color = "background-color: #ffcccc"  # red
+    else:
+        color = "background-color: #fff5cc"  # yellow
+    return [color] * len(row)
+
+
 def render_recommendations(rec: dict[str, dict], distributor_fee_pct: float) -> None:
     st.markdown(
         f"**Логика:** в каждом пакете выбирается базовая валюта, и для остальных "
         f"валют publisher USD поднимается до уровня базы (только вверх). "
-        f"Из target publisher USD считаем обратно retail USD с учётом VAT "
-        f"и комиссии дистрибьютора ({distributor_fee_pct}%), затем ψ-округляем до .99."
+        f"Если цена уже даёт ≥ базы — не трогаем (retail остаётся как есть). "
+        f"Если поднимаем — пересчитываем retail с учётом VAT и комиссии "
+        f"дистрибьютора ({distributor_fee_pct}%), затем ψ-округляем до .99."
+    )
+    st.markdown(
+        "🟨 — рекомендуем поднять цену &nbsp;&nbsp;&nbsp; "
+        "🟥 — большой разрыв (>15% от базы)"
     )
 
     for pkg in PACKAGE_ORDER:
@@ -664,7 +697,7 @@ def render_recommendations(rec: dict[str, dict], distributor_fee_pct: float) -> 
         title = PACKAGE_DISPLAY.get(pkg, pkg)
         if not rows:
             with st.expander(f"{title} — нет данных", expanded=False):
-                st.info(f"Не удалось получить цены ни в одной валюте этого пакета.")
+                st.info("Не удалось получить цены ни в одной валюте этого пакета.")
             continue
 
         if base_pub_usd is None:
@@ -675,7 +708,10 @@ def render_recommendations(rec: dict[str, dict], distributor_fee_pct: float) -> 
         with st.expander(header, expanded=(pkg == "ROW")):
             df = pd.DataFrame(rows)
 
-            # выкидываем служебные поля, переименовываем для UI
+            # Сохраняем служебные поля для стайлера
+            df["_is_changed"] = df["is_changed"]
+            df["_gap_pct"] = df["gap_pct"]
+
             display = df.rename(columns={
                 "tier_label": "Tier",
                 "country": "Представитель",
@@ -687,34 +723,62 @@ def render_recommendations(rec: dict[str, dict], distributor_fee_pct: float) -> 
                 "target_pub_usd": "Target pub USD",
                 "rec_pub_usd": "Rec pub USD",
                 "delta_pub_usd": "Δ pub USD",
+                "gap_pct_str": "Разрыв",
                 "rec_retail_usd_raw": "Rec retail USD (raw)",
                 "rec_retail_usd_psy": "Rec retail USD (.99)",
                 "rec_retail_local": "Rec retail local",
-            })[[
+            })
+
+            cols = [
                 "Tier", "Steam currency", "Представитель", "VAT %",
                 "Текущая локальная", "Текущая USD retail",
-                "Текущий pub USD", "Target pub USD",
+                "Текущий pub USD", "Target pub USD", "Разрыв",
                 "Rec pub USD", "Δ pub USD",
                 "Rec retail USD (raw)", "Rec retail USD (.99)",
                 "Rec retail local",
-            ]]
+            ]
 
-            st.dataframe(
-                display,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Текущая локальная":      st.column_config.NumberColumn(format="%.2f"),
-                    "Текущая USD retail":     st.column_config.NumberColumn(format="$%.2f"),
-                    "Текущий pub USD":        st.column_config.NumberColumn(format="$%.2f"),
-                    "Target pub USD":         st.column_config.NumberColumn(format="$%.2f"),
-                    "Rec pub USD":            st.column_config.NumberColumn(format="$%.2f"),
-                    "Δ pub USD":              st.column_config.NumberColumn(format="%+.2f"),
-                    "Rec retail USD (raw)":   st.column_config.NumberColumn(format="$%.2f"),
-                    "Rec retail USD (.99)":   st.column_config.NumberColumn(format="$%.2f"),
-                    "Rec retail local":       st.column_config.NumberColumn(format="%.2f"),
-                },
+            # Стайлер применяем по полному display, потом отбираем колонки
+            styled = (
+                display[cols + ["_is_changed", "_gap_pct"]]
+                .style
+                .apply(_row_style, axis=1)
+                .hide(subset=["_is_changed", "_gap_pct"], axis="columns")
+                .format({
+                    "Текущая локальная":      "{:.2f}",
+                    "Текущая USD retail":     "${:.2f}",
+                    "Текущий pub USD":        "${:.2f}",
+                    "Target pub USD":         "${:.2f}",
+                    "Rec pub USD":            "${:.2f}",
+                    "Δ pub USD":              "{:+.2f}",
+                    "Rec retail USD (raw)":   "${:.2f}",
+                    "Rec retail USD (.99)":   "${:.2f}",
+                    "Rec retail local":       "{:.2f}",
+                }, na_rep="—")
             )
+
+            st.dataframe(styled, use_container_width=True, hide_index=True)
+
+            # ---- Кандидаты на исключение из дистрибуции (gap > 5%) ----
+            removal_candidates = [
+                r for r in rows
+                if r["is_changed"]
+                and r["gap_pct"] is not None
+                and r["gap_pct"] > 0.05
+            ]
+            if removal_candidates:
+                st.markdown("**🚫 Кандидаты на исключение из дистрибуции** (если поднять цену не вариант):")
+                lines = []
+                for r in removal_candidates:
+                    gap = r["gap_pct"] * 100
+                    severity = "🟥" if r["gap_pct"] > 0.15 else "🟨"
+                    lines.append(
+                        f"- {severity} **{r['tier']}** — разрыв "
+                        f"**{gap:+.1f}%**, текущий pub USD ${r['current_pub_usd']}, "
+                        f"нужно ${r['rec_pub_usd']} "
+                        f"(или исключить из дистрибуции)"
+                    )
+                st.markdown("\n".join(lines))
 
 
 def main() -> None:
@@ -817,6 +881,7 @@ def main() -> None:
                 all_rows.append({
                     "package": pkg,
                     "is_base": r["is_base"],
+                    "is_changed": r["is_changed"],
                     "tier": r["tier"],
                     "country": r["country"],
                     "vat_pct": r["vat_pct"],
@@ -826,6 +891,7 @@ def main() -> None:
                     "target_pub_usd": r["target_pub_usd"],
                     "rec_pub_usd": r["rec_pub_usd"],
                     "delta_pub_usd": r["delta_pub_usd"],
+                    "gap_pct": round(r["gap_pct"], 4) if r["gap_pct"] is not None else None,
                     "rec_retail_usd_raw": r["rec_retail_usd_raw"],
                     "rec_retail_usd_psy": r["rec_retail_usd_psy"],
                     "rec_retail_local": r["rec_retail_local"],
