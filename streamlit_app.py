@@ -22,6 +22,8 @@ Streamlit-приложение, которое для заданного Steam A
 
 from __future__ import annotations
 
+import base64
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from math import floor
@@ -29,6 +31,145 @@ from math import floor
 import pandas as pd
 import requests
 import streamlit as st
+
+# ----------------------------------------------------------------------------
+# Brand palette
+# ----------------------------------------------------------------------------
+
+BRAND = {
+    "primary":    "#4600FF",   # purple — buttons, accents
+    "bg":         "#FFFFFF",
+    "text":       "#1A1A1A",
+    "green":      "#3DD070",   # success / OK
+    "orange":     "#FF7F42",   # каждое изменение цены
+    "pink":       "#FF3895",   # большой разрыв (>15%)
+}
+# Полупрозрачные тинты для подсветки строк (чтобы текст оставался читаемым)
+ROW_TINT_ORANGE = "rgba(255, 127, 66, 0.20)"
+ROW_TINT_PINK   = "rgba(255, 56, 149, 0.20)"
+
+
+def inject_css() -> None:
+    """Подгружаем Poppins и кастомизируем стили Streamlit."""
+    css = """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+
+    html, body, [class*="css"], [class*="st-"],
+    button, input, select, textarea,
+    .stMarkdown, .stDataFrame, .stTable {
+        font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+    }
+
+    /* Главный заголовок и подзаголовки */
+    h1, h2, h3, h4 {
+        font-family: 'Poppins', sans-serif !important;
+        font-weight: 600 !important;
+        color: #1A1A1A !important;
+    }
+
+    /* Primary-кнопка */
+    .stButton > button[kind="primary"] {
+        background-color: #4600FF !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        padding: 10px 24px !important;
+        transition: all 0.15s ease;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background-color: #3700CC !important;
+        box-shadow: 0 4px 12px rgba(70, 0, 255, 0.25);
+        transform: translateY(-1px);
+    }
+    .stButton > button[kind="primary"]:active {
+        transform: translateY(0);
+    }
+
+    /* Secondary-кнопки (download) */
+    .stDownloadButton > button {
+        background-color: #FFFFFF !important;
+        color: #4600FF !important;
+        border: 1.5px solid #4600FF !important;
+        border-radius: 8px !important;
+        font-weight: 500 !important;
+    }
+    .stDownloadButton > button:hover {
+        background-color: #4600FF !important;
+        color: #FFFFFF !important;
+    }
+
+    /* Табы */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        border-bottom: 1px solid #E5E5E5;
+    }
+    .stTabs [data-baseweb="tab"] {
+        font-weight: 500 !important;
+        color: #707070 !important;
+    }
+    .stTabs [aria-selected="true"] {
+        color: #4600FF !important;
+    }
+    .stTabs [data-baseweb="tab-highlight"] {
+        background-color: #4600FF !important;
+    }
+
+    /* Expanders */
+    .streamlit-expanderHeader,
+    [data-testid="stExpander"] summary {
+        font-weight: 500 !important;
+    }
+
+    /* Цветные точки в легенде */
+    .legend-dot {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border-radius: 3px;
+        vertical-align: -2px;
+        margin-right: 6px;
+    }
+
+    /* Скрываем дефолтный заголовок Streamlit */
+    [data-testid="stHeader"] {
+        background-color: transparent;
+    }
+
+    /* Прижимаем контент чуть ближе к верху */
+    .block-container {
+        padding-top: 2rem !important;
+    }
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
+
+
+def render_logo() -> None:
+    """Логотип в шапке. Ищется как logo.svg рядом со скриптом."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(here, "logo.svg"),
+        os.path.join(here, "Black.svg"),
+        "logo.svg",
+    ]
+    logo_path = next((p for p in candidates if os.path.exists(p)), None)
+    if not logo_path:
+        return  # graceful — без логотипа просто не рисуем
+
+    with open(logo_path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("ascii")
+
+    st.markdown(
+        f'''
+        <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 8px;">
+            <img src="data:image/svg+xml;base64,{b64}"
+                 style="height: 56px; width: auto;" alt="logo"/>
+        </div>
+        ''',
+        unsafe_allow_html=True,
+    )
 
 # ----------------------------------------------------------------------------
 # VAT-таблица (inclusive). Источник:
@@ -659,8 +800,8 @@ def build_recommendations(
 def _row_style(row: pd.Series) -> list[str]:
     """
     Подсветка строки рекомендации:
-      • жёлтый — цена изменена (delta > 0)
-      • красный — цена изменена И gap > 15% (большой разрыв)
+      • orange — цена изменена (delta > 0)
+      • pink — цена изменена И gap > 15% (большой разрыв)
       • без цвета — цена не меняется (база или уже выше базы)
     """
     is_changed = bool(row.get("_is_changed"))
@@ -669,9 +810,9 @@ def _row_style(row: pd.Series) -> list[str]:
     if not is_changed:
         return [""] * len(row)
     if gap > 0.15:
-        color = "background-color: #ffcccc"  # red
+        color = f"background-color: {ROW_TINT_PINK}"
     else:
-        color = "background-color: #fff5cc"  # yellow
+        color = f"background-color: {ROW_TINT_ORANGE}"
     return [color] * len(row)
 
 
@@ -684,8 +825,14 @@ def render_recommendations(rec: dict[str, dict], distributor_fee_pct: float) -> 
         f"дистрибьютора ({distributor_fee_pct}%), затем ψ-округляем до .99."
     )
     st.markdown(
-        "🟨 — рекомендуем поднять цену &nbsp;&nbsp;&nbsp; "
-        "🟥 — большой разрыв (>15% от базы)"
+        f'''
+        <div style="display:flex; gap:24px; align-items:center; font-size:14px; margin: 4px 0 12px;">
+            <span><span class="legend-dot" style="background:{BRAND['orange']};"></span>рекомендуем поднять цену</span>
+            <span><span class="legend-dot" style="background:{BRAND['pink']};"></span>большой разрыв (&gt;15% от базы)</span>
+            <span><span class="legend-dot" style="background:{BRAND['green']};"></span>без изменений</span>
+        </div>
+        ''',
+        unsafe_allow_html=True,
     )
 
     for pkg in PACKAGE_ORDER:
@@ -767,18 +914,28 @@ def render_recommendations(rec: dict[str, dict], distributor_fee_pct: float) -> 
                 and r["gap_pct"] > 0.05
             ]
             if removal_candidates:
-                st.markdown("**🚫 Кандидаты на исключение из дистрибуции** (если поднять цену не вариант):")
-                lines = []
+                st.markdown("**Кандидаты на исключение из дистрибуции** (если поднять цену не вариант):")
+                items_html = []
                 for r in removal_candidates:
                     gap = r["gap_pct"] * 100
-                    severity = "🟥" if r["gap_pct"] > 0.15 else "🟨"
-                    lines.append(
-                        f"- {severity} **{r['tier']}** — разрыв "
-                        f"**{gap:+.1f}%**, текущий pub USD ${r['current_pub_usd']}, "
-                        f"нужно ${r['rec_pub_usd']} "
-                        f"(или исключить из дистрибуции)"
+                    color = BRAND["pink"] if r["gap_pct"] > 0.15 else BRAND["orange"]
+                    items_html.append(
+                        f'<li><span class="legend-dot" style="background:{color};"></span>'
+                        f'<b>{r["tier"]}</b> — разрыв <b>{gap:+.1f}%</b>, '
+                        f'текущий pub USD ${r["current_pub_usd"]}, нужно ${r["rec_pub_usd"]} '
+                        f'(или исключить из дистрибуции)</li>'
                     )
-                st.markdown("\n".join(lines))
+                st.markdown(
+                    f'<ul style="margin: 4px 0 0 0; padding-left: 18px; line-height: 1.7;">{"".join(items_html)}</ul>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f'<div style="color:{BRAND["green"]}; font-weight:500; margin-top:8px;">'
+                    f'✓ Все валюты пакета в пределах 5% от базы — кандидатов на исключение нет.'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
 
 def main() -> None:
@@ -787,6 +944,9 @@ def main() -> None:
         page_icon="💰",
         layout="wide",
     )
+
+    inject_css()
+    render_logo()
 
     st.title("Steam Publisher Revenue Calculator")
     st.caption(
